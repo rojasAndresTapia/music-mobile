@@ -117,10 +117,10 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 const styles = StyleSheet.create({
   enhancedPlayer: {
     position: 'absolute',
-    bottom: 48,
+    bottom: 3,
     left: 0,
     right: 0,
-    backgroundColor: 'white',
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
     borderTopLeftRadius: 16,
@@ -150,6 +150,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
   },
   playerTrackInfo: {
     flex: 1,
@@ -182,6 +183,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingTop: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
   },
   controlButton: {
     padding: 8,

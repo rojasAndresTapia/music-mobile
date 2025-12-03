@@ -68,7 +68,7 @@ class ApiService {
     return `${this.baseUrl}/audio-proxy?key=${encodeURIComponent(key)}`;
   }
 
-  async getImageUrl(key: string): Promise<string> {
+  getImageUrl(key: string): string {
     // Use the image proxy endpoint directly instead of signed URLs
     return `${this.baseUrl}/image-proxy?key=${encodeURIComponent(key)}`;
   }

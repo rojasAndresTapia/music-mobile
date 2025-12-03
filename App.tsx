@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { Audio } from 'expo-av';
@@ -7,6 +7,7 @@ import { AlbumGrid } from './src/components/AlbumGrid';
 import { TrackList } from './src/components/TrackList';
 import { AlbumHeader } from './src/components/AlbumHeader';
 import { AudioPlayer } from './src/components/AudioPlayer';
+import { apiService } from './src/services/api';
 
 export default function App() {
   const [showMusicApp, setShowMusicApp] = useState(false);
@@ -21,8 +22,10 @@ export default function App() {
   const [sound, setSound] = useState(null);
   const [showTrackList, setShowTrackList] = useState(false);
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
+  const currentTrackIndexRef = useRef(0); // Ref to track current index for callbacks
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
+  const [isAutoPlayingNext, setIsAutoPlayingNext] = useState(false);
   
   // Artist grouping state
   const [selectedArtist, setSelectedArtist] = useState(null);
@@ -55,7 +58,13 @@ export default function App() {
       
       // Stop current sound if playing
       if (sound) {
-        await sound.unloadAsync();
+        try {
+          // Remove status update listener before unloading to prevent race conditions
+          sound.setOnPlaybackStatusUpdate(null);
+          await sound.unloadAsync();
+        } catch (error) {
+          console.log('⚠️ Error unloading previous sound:', error);
+        }
         setSound(null);
       }
 
@@ -76,15 +85,31 @@ export default function App() {
       );
 
       // Set up progress tracking
-      newSound.setOnPlaybackStatusUpdate((status) => {
+      newSound.setOnPlaybackStatusUpdate(async (status) => {
         if (status.isLoaded) {
           setPosition(status.positionMillis || 0);
           setDuration(status.durationMillis || 0);
           setIsPlaying(status.isPlaying || false);
           
           // Auto-play next track when current ends
-          if (status.didJustFinish && !status.isLooping) {
-            skipToNext();
+          if (status.didJustFinish && !status.isLooping && !isAutoPlayingNext) {
+            console.log('🎵 Track finished, current index:', currentTrackIndexRef.current);
+            setIsAutoPlayingNext(true);
+            setIsPlaying(false);
+            
+            // Stop the current sound immediately to prevent restart
+            try {
+              await newSound.stopAsync();
+            } catch (error) {
+              console.log('⚠️ Error stopping finished sound:', error);
+            }
+            
+            // Small delay to ensure sound is stopped
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+            skipToNext().finally(() => {
+              setIsAutoPlayingNext(false);
+            });
           }
         }
       });
@@ -97,8 +122,9 @@ export default function App() {
         fileName: trackFileName
       });
       setCurrentTrackIndex(trackIndex);
+      currentTrackIndexRef.current = trackIndex; // Update ref immediately
       setIsPlaying(true);
-      console.log('✅ Track playing successfully');
+      console.log('✅ Track playing successfully, index:', trackIndex);
 
     } catch (error) {
       console.error('❌ Error playing track:', error);
@@ -110,12 +136,22 @@ export default function App() {
 
   // Skip to next track
   const skipToNext = async () => {
-    if (!currentAlbum || !currentAlbum.tracks) return;
+    if (!currentAlbum || !currentAlbum.tracks) {
+      console.log('⚠️ Cannot skip: no album or tracks');
+      setIsAutoPlayingNext(false);
+      return;
+    }
     
-    const nextIndex = currentTrackIndex >= currentAlbum.tracks.length - 1 ? 0 : currentTrackIndex + 1;
+    // Use ref to get the most up-to-date index (important for callbacks)
+    const currentIndex = currentTrackIndexRef.current;
+    const nextIndex = currentIndex >= currentAlbum.tracks.length - 1 ? 0 : currentIndex + 1;
     const nextTrack = currentAlbum.tracks[nextIndex];
     
-    console.log('⏭️ Skipping to next:', nextTrack);
+    console.log('⏭️ Skipping to next track:', nextTrack, 'Current index:', currentIndex, 'Next index:', nextIndex);
+    
+    // Small delay to ensure previous sound is fully unloaded
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
     await playTrack(currentAlbum.artist, currentAlbum.album, nextTrack, nextIndex);
   };
 
@@ -123,10 +159,12 @@ export default function App() {
   const skipToPrevious = async () => {
     if (!currentAlbum || !currentAlbum.tracks) return;
     
-    const prevIndex = currentTrackIndex <= 0 ? currentAlbum.tracks.length - 1 : currentTrackIndex - 1;
+    // Use ref to get the most up-to-date index
+    const currentIndex = currentTrackIndexRef.current;
+    const prevIndex = currentIndex <= 0 ? currentAlbum.tracks.length - 1 : currentIndex - 1;
     const prevTrack = currentAlbum.tracks[prevIndex];
     
-    console.log('⏮️ Skipping to previous:', prevTrack);
+    console.log('⏮️ Skipping to previous:', prevTrack, 'Current index:', currentIndex, 'Prev index:', prevIndex);
     await playTrack(currentAlbum.artist, currentAlbum.album, prevTrack, prevIndex);
   };
 
@@ -242,6 +280,22 @@ export default function App() {
       const { apiService } = await import('./src/services/api');
       const data = await apiService.fetchAlbums();
       console.log('✅ Music data loaded:', Object.keys(data).length, 'artists');
+      
+      // Debug: Count albums with images
+      let albumsWithImages = 0;
+      let albumsWithoutImages = 0;
+      Object.keys(data).forEach(artist => {
+        Object.keys(data[artist]).forEach(album => {
+          if (data[artist][album].images && data[artist][album].images.length > 0) {
+            albumsWithImages++;
+            console.log(`📸 Album with image: ${artist} - ${album}, images:`, data[artist][album].images);
+          } else {
+            albumsWithoutImages++;
+          }
+        });
+      });
+      console.log(`📊 Albums with images: ${albumsWithImages}, without images: ${albumsWithoutImages}`);
+      
       setMusicData(data);
       setShowMusicApp(true);
     } catch (error) {
@@ -296,6 +350,7 @@ export default function App() {
           <ScrollView 
             style={styles.musicContent}
             contentContainerStyle={{ paddingBottom: currentTrack ? 180 : 20 }}
+            removeClippedSubviews={true}
           >
             <AlbumGrid
               mixedList={selectedArtist.albums.map(album => ({ type: 'album', album }))}
@@ -306,7 +361,7 @@ export default function App() {
                   album: album.name,
                   tracks: album.tracks,
                   image: album.images && album.images.length > 0 
-                    ? `http://192.168.1.159:4000/image-proxy?key=${encodeURIComponent(`${album.artist}/${album.name}/${album.images[0]}`)}`
+                    ? apiService.getImageUrl(`${album.artist}/${album.name}/${album.images[0]}`)
                     : null
                 });
                 setShowTrackList(true);
@@ -336,7 +391,7 @@ export default function App() {
                         album,
                         tracks: musicData[artist][album].tracks,
                         image: musicData[artist][album].images?.[0] 
-                          ? `http://192.168.1.159:4000/image-proxy?key=${encodeURIComponent(`${artist}/${album}/${musicData[artist][album].images[0]}`)}`
+                          ? apiService.getImageUrl(`${artist}/${album}/${musicData[artist][album].images[0]}`)
                           : null
                       });
                       setShowTrackList(true);
@@ -373,6 +428,7 @@ export default function App() {
           <ScrollView 
             style={styles.musicContent}
             contentContainerStyle={{ paddingBottom: currentTrack ? 180 : 20 }}
+            removeClippedSubviews={true}
           >
             <TrackList
               tracks={currentAlbum.tracks}
@@ -431,6 +487,7 @@ export default function App() {
         <ScrollView 
           style={styles.musicContent}
           contentContainerStyle={{ paddingBottom: currentTrack ? 180 : 20 }}
+          removeClippedSubviews={true}
         >
           {musicData ? (
             <AlbumGrid
@@ -445,7 +502,7 @@ export default function App() {
                   album: album.name,
                   tracks: album.tracks,
                   image: album.images && album.images.length > 0 
-                    ? `http://192.168.1.159:4000/image-proxy?key=${encodeURIComponent(`${album.artist}/${album.name}/${album.images[0]}`)}`
+                    ? apiService.getImageUrl(`${album.artist}/${album.name}/${album.images[0]}`)
                     : null
                 });
                 setShowTrackList(true);

@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
+import { apiService } from '../services/api';
 
 interface AlbumGridProps {
   mixedList: any[];
@@ -20,7 +21,7 @@ export const AlbumGrid: React.FC<AlbumGridProps> = ({
           const artist = item.artist;
           const albumImages = artist.albums.slice(0, 4).map(album => 
             album.images && album.images.length > 0 
-              ? `http://192.168.1.159:4000/image-proxy?key=${encodeURIComponent(`${album.artist}/${album.name}/${album.images[0]}`)}`
+              ? apiService.getImageUrl(`${album.artist}/${album.name}/${album.images[0]}`)
               : null
           ).filter(Boolean);
           
@@ -51,7 +52,7 @@ export const AlbumGrid: React.FC<AlbumGridProps> = ({
                           key={imgIndex}
                           source={{ uri: imageUrl }}
                           style={imageStyle}
-                          defaultSource={{ uri: 'https://via.placeholder.com/70x70/333/fff?text=♪' }}
+                          resizeMode="cover"
                         />
                       );
                     })}
@@ -86,7 +87,7 @@ export const AlbumGrid: React.FC<AlbumGridProps> = ({
           // Individual album card
           const album = item.album;
           const imageUrl = album.images && album.images.length > 0 
-            ? `http://192.168.1.159:4000/image-proxy?key=${encodeURIComponent(`${album.artist}/${album.name}/${album.images[0]}`)}`
+            ? apiService.getImageUrl(`${album.artist}/${album.name}/${album.images[0]}`)
             : null;
           
           return (
@@ -100,7 +101,14 @@ export const AlbumGrid: React.FC<AlbumGridProps> = ({
                   uri: imageUrl || 'https://via.placeholder.com/150x150/333/fff?text=♪'
                 }}
                 style={styles.albumArtwork}
-                defaultSource={{ uri: 'https://via.placeholder.com/150x150/333/fff?text=Loading' }}
+                resizeMode="cover"
+                onError={(error) => {
+                  // Silently handle pool violations - they're expected with many images
+                  const errorMsg = error.nativeEvent?.error || '';
+                  if (!errorMsg.includes('Pool hard cap')) {
+                    console.log('❌ Image load error for album:', album.name);
+                  }
+                }}
               />
               
               <View style={styles.albumInfo}>
