@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,11 +9,14 @@ import {
   Alert,
   ActivityIndicator
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { useMusicData } from '../hooks/useMusicData';
+import { useAudio } from '../context/AudioContext';
 import { createSmartMixedList, MixedListItem } from '../utils/dataTransformers';
+import { SearchBar } from '../components/SearchBar';
 
 type HomeScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Home'>;
 
@@ -22,8 +25,16 @@ interface Props {
 }
 
 export const HomeScreen: React.FC<Props> = ({ navigation }) => {
+  const insets = useSafeAreaInsets();
   const { albums, loading, error } = useMusicData();
+  const { currentTrack } = useAudio();
   const [mixedList, setMixedList] = useState<MixedListItem[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  // Calculate bottom padding: player bar height (~90px with new layout) + safe area bottom + extra spacing
+  const playerBarHeight = 90;
+  const extraSpacing = 16; // Extra space for better UX
+  const bottomPadding = (currentTrack ? playerBarHeight + extraSpacing : 0) + insets.bottom;
 
   useEffect(() => {
     if (albums.length > 0) {
@@ -32,6 +43,41 @@ export const HomeScreen: React.FC<Props> = ({ navigation }) => {
       console.log('📱 Created mixed list with', mixed.length, 'items');
     }
   }, [albums]);
+
+  // Filter mixed list based on search term
+  const filteredList = useMemo(() => {
+    if (!searchTerm.trim()) {
+      return mixedList;
+    }
+
+    const searchLower = searchTerm.toLowerCase().trim();
+    return mixedList.filter(item => {
+      if (item.type === 'artist' && item.artist) {
+        // Search in artist name
+        const artistName = item.artist.name.toLowerCase();
+        if (artistName.includes(searchLower)) return true;
+        
+        // Search in album names
+        return item.artist.albums.some(album => 
+          album.album.toLowerCase().includes(searchLower) ||
+          album.author.toLowerCase().includes(searchLower)
+        );
+      } else if (item.type === 'album' && item.album) {
+        // Search in album name, artist name, or track titles
+        const albumName = item.album.album.toLowerCase();
+        const artistName = item.album.author.toLowerCase();
+        if (albumName.includes(searchLower) || artistName.includes(searchLower)) {
+          return true;
+        }
+        
+        // Search in track titles
+        return item.album.tracks.some(track => 
+          track.title.toLowerCase().includes(searchLower)
+        );
+      }
+      return false;
+    });
+  }, [mixedList, searchTerm]);
 
   const handleItemPress = async (item: MixedListItem) => {
     if (item.type === 'album' && item.album) {
@@ -45,10 +91,12 @@ export const HomeScreen: React.FC<Props> = ({ navigation }) => {
 
   const renderItem = (item: MixedListItem, index: number) => {
     const isArtist = item.type === 'artist';
-    const title = isArtist ? item.artist?.name : item.album?.album;
+    // For single albums: show artist (bold) above album (regular)
+    // For artists: show artist name (bold) above stats (regular)
+    const title = isArtist ? item.artist?.name : item.album?.author;
     const subtitle = isArtist 
       ? `${item.artist?.albums.length} albums • ${item.artist?.totalTracks} tracks`
-      : item.album?.author;
+      : item.album?.album;
     const thumbnail = isArtist ? item.artist?.thumbnail : item.album?.thumbnail;
 
     return (
@@ -106,15 +154,26 @@ export const HomeScreen: React.FC<Props> = ({ navigation }) => {
     <View style={styles.container}>
       <Text style={styles.header}>🎵 Music Library</Text>
       <Text style={styles.subheader}>
-        {albums.length} albums • {mixedList.length} items
+        {albums.length} albums • {searchTerm ? `${filteredList.length} of ${mixedList.length}` : mixedList.length} items
       </Text>
       <Text style={styles.versionText}>
         v{appVersion} (Build: {buildNumber})
       </Text>
       
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      {/* Search Bar */}
+      <SearchBar
+        searchTerm={searchTerm}
+        onSearchChange={setSearchTerm}
+        placeholder="Search artists, albums, or songs..."
+      />
+      
+      <ScrollView 
+        style={styles.scrollView} 
+        contentContainerStyle={{ paddingBottom: bottomPadding }}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.grid}>
-          {mixedList.map((item, index) => renderItem(item, index))}
+          {filteredList.map((item, index) => renderItem(item, index))}
         </View>
       </ScrollView>
     </View>

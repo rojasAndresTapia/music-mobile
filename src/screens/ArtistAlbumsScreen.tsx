@@ -7,10 +7,12 @@ import {
   TouchableOpacity,
   Image,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { AlbumListProps } from '../types/Album';
+import { useAudio } from '../context/AudioContext';
 
 type ArtistAlbumsScreenRouteProp = RouteProp<RootStackParamList, 'ArtistAlbums'>;
 type ArtistAlbumsScreenNavigationProp = StackNavigationProp<RootStackParamList, 'ArtistAlbums'>;
@@ -21,7 +23,14 @@ interface Props {
 }
 
 export const ArtistAlbumsScreen: React.FC<Props> = ({ route, navigation }) => {
+  const insets = useSafeAreaInsets();
   const { artist } = route.params;
+  const { currentTrack } = useAudio();
+  
+  // Calculate bottom padding: player bar height (~90px with new layout) + safe area bottom + extra spacing
+  const playerBarHeight = 90;
+  const extraSpacing = 16; // Extra space for better UX
+  const bottomPadding = (currentTrack ? playerBarHeight + extraSpacing : 0) + insets.bottom;
 
   const handleAlbumPress = (album: AlbumListProps) => {
     navigation.navigate('AlbumDetail', { album });
@@ -79,7 +88,11 @@ export const ArtistAlbumsScreen: React.FC<Props> = ({ route, navigation }) => {
       </View>
 
       {/* Albums Grid */}
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.scrollView} 
+        contentContainerStyle={{ paddingBottom: bottomPadding }}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.albumsHeader}>
           <Text style={styles.albumsTitle}>Albums</Text>
         </View>

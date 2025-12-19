@@ -142,12 +142,18 @@ export class ExpoAudioService {
 
       console.log('📥 Creating audio sound object...');
       // Create and load new sound with background playback enabled
+      // Configure for high-quality audio playback
       const { sound } = await Audio.Sound.createAsync(
         { uri: streamingUrl },
         { 
           shouldPlay: true, 
           isLooping: false,
-          progressUpdateIntervalMillis: 1000
+          progressUpdateIntervalMillis: 1000,
+          volume: 1.0, // Full volume (0.0 to 1.0)
+          rate: 1.0, // Normal playback speed (0.5 to 2.0)
+          shouldCorrectPitch: true, // Maintain pitch when changing rate
+          // Additional quality settings
+          isMuted: false,
         }
       );
 

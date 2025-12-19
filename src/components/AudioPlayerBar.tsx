@@ -7,6 +7,7 @@ import {
   Image,
   Dimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAudio } from '../context/AudioContext';
 
 interface Props {
@@ -14,11 +15,14 @@ interface Props {
 }
 
 export const AudioPlayerBar: React.FC<Props> = ({ visible }) => {
+  const insets = useSafeAreaInsets();
   const { 
     currentTrack, 
     isPlaying, 
     pauseTrack, 
-    resumeTrack 
+    resumeTrack,
+    skipToNext,
+    skipToPrevious
   } = useAudio();
 
   const handlePlayPause = async () => {
@@ -33,13 +37,20 @@ export const AudioPlayerBar: React.FC<Props> = ({ visible }) => {
     }
   };
 
-  // Simplified - no skip functionality for now
-  const handleNext = () => {
-    console.log('Skip next - not implemented in simplified version');
+  const handleNext = async () => {
+    try {
+      await skipToNext();
+    } catch (error) {
+      console.error('Error skipping to next track:', error);
+    }
   };
 
-  const handlePrevious = () => {
-    console.log('Skip previous - not implemented in simplified version');
+  const handlePrevious = async () => {
+    try {
+      await skipToPrevious();
+    } catch (error) {
+      console.error('Error skipping to previous track:', error);
+    }
   };
 
   const formatTime = (seconds: number): string => {
@@ -53,7 +64,7 @@ export const AudioPlayerBar: React.FC<Props> = ({ visible }) => {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingBottom: Math.max(insets.bottom, 8) }]}>
       {/* Progress Bar - Simplified */}
       <View style={styles.progressContainer}>
         <View style={styles.progressBar}>
@@ -68,27 +79,17 @@ export const AudioPlayerBar: React.FC<Props> = ({ visible }) => {
 
       {/* Player Content */}
       <View style={styles.playerContent}>
-        {/* Track Info */}
+        {/* Track Info - Above Controls */}
         <View style={styles.trackInfo}>
-          <Image
-            source={{ 
-              uri: 'https://via.placeholder.com/50x50/333/fff?text=♪' 
-            }}
-            style={styles.albumArt}
-            defaultSource={{ uri: 'https://via.placeholder.com/50x50/333/fff?text=♪' }}
-          />
-          
-          <View style={styles.trackDetails}>
-            <Text style={styles.trackTitle} numberOfLines={1}>
-              {currentTrack.title || 'Unknown Track'}
-            </Text>
-            <Text style={styles.trackArtist} numberOfLines={1}>
-              {currentTrack.artist || 'Unknown Artist'}
-            </Text>
-          </View>
+          <Text style={styles.trackTitle} numberOfLines={1}>
+            {currentTrack.title || 'Unknown Track'}
+          </Text>
+          <Text style={styles.trackArtist} numberOfLines={1}>
+            {currentTrack.artist || 'Unknown Artist'}
+          </Text>
         </View>
 
-        {/* Controls */}
+        {/* Controls - Centered */}
         <View style={styles.controls}>
           <TouchableOpacity onPress={handlePrevious} style={styles.controlButton}>
             <Text style={styles.controlIcon}>⏮️</Text>
@@ -103,13 +104,6 @@ export const AudioPlayerBar: React.FC<Props> = ({ visible }) => {
           <TouchableOpacity onPress={handleNext} style={styles.controlButton}>
             <Text style={styles.controlIcon}>⏭️</Text>
           </TouchableOpacity>
-        </View>
-
-        {/* Time - Simplified */}
-        <View style={styles.timeContainer}>
-          <Text style={styles.timeText}>
-            {isPlaying ? 'Playing' : 'Paused'}
-          </Text>
         </View>
       </View>
     </View>
@@ -135,6 +129,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 8,
+    // Minimum padding will be added via inline style using safe area insets
   },
   progressContainer: {
     height: 3,
@@ -148,40 +143,32 @@ const styles = StyleSheet.create({
     backgroundColor: '#007AFF',
   },
   playerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
   },
   trackInfo: {
-    flex: 1,
-    flexDirection: 'row',
+    width: '100%',
     alignItems: 'center',
-  },
-  albumArt: {
-    width: 40,
-    height: 40,
-    borderRadius: 6,
-    backgroundColor: '#f0f0f0',
-  },
-  trackDetails: {
-    flex: 1,
-    marginLeft: 12,
+    marginBottom: 8,
+    paddingHorizontal: 8,
   },
   trackTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#333',
     marginBottom: 2,
+    textAlign: 'center',
   },
   trackArtist: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#666',
+    textAlign: 'center',
   },
   controls: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 16,
+    justifyContent: 'center',
   },
   controlButton: {
     padding: 8,
@@ -201,13 +188,5 @@ const styles = StyleSheet.create({
   playIcon: {
     fontSize: 18,
     color: 'white',
-  },
-  timeContainer: {
-    minWidth: 80,
-    alignItems: 'flex-end',
-  },
-  timeText: {
-    fontSize: 12,
-    color: '#666',
   },
 });

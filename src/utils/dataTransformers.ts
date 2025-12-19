@@ -84,29 +84,25 @@ export const cleanSongTitle = (filename: string, artist?: string): string => {
 
 // Group albums by artist for artist view (case-insensitive)
 export const groupAlbumsByArtist = (albums: AlbumListProps[]): Artist[] => {
+  // Use lowercase as key to ensure case-insensitive grouping
   const artistsMap = new Map<string, Artist>();
 
   albums.forEach(album => {
     const artistName = album.author;
-    const artistNameLower = artistName.toLowerCase();
+    const artistNameLower = artistName.toLowerCase().trim();
     
     // Find existing artist with same name (case-insensitive)
-    let existingArtist: Artist | undefined;
-    artistsMap.forEach((artist, key) => {
-      if (key.toLowerCase() === artistNameLower && !existingArtist) {
-        existingArtist = artist;
-      }
-    });
+    let existingArtist = artistsMap.get(artistNameLower);
     
     if (!existingArtist) {
-      // Create new artist entry
+      // Create new artist entry - use the first occurrence's capitalization
       const newArtist: Artist = {
-        name: artistName, // Use the first occurrence's capitalization
+        name: artistName.trim(), // Use the first occurrence's capitalization
         albums: [],
         thumbnail: '', // Will be set to first album's thumbnail
         totalTracks: 0
       };
-      artistsMap.set(artistName, newArtist);
+      artistsMap.set(artistNameLower, newArtist);
       existingArtist = newArtist;
     }
 

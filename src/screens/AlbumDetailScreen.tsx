@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
@@ -24,8 +25,14 @@ interface Props {
 }
 
 export const AlbumDetailScreen: React.FC<Props> = ({ route }) => {
+  const insets = useSafeAreaInsets();
   const { album } = route.params;
   const { playTrack, currentTrack, isLoading, isPlaying } = useAudio();
+  
+  // Calculate bottom padding: player bar height (~90px with new layout) + safe area bottom + extra spacing
+  const playerBarHeight = 90;
+  const extraSpacing = 16; // Extra space for better UX
+  const bottomPadding = (currentTrack ? playerBarHeight + extraSpacing : 0) + insets.bottom;
 
   const handleTrackPress = async (track: Track, index: number) => {
     console.log('🎵 Playing track:', track.title);
@@ -139,7 +146,11 @@ export const AlbumDetailScreen: React.FC<Props> = ({ route }) => {
       </TouchableOpacity>
 
       {/* Track List */}
-      <ScrollView style={styles.trackList} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.trackList} 
+        contentContainerStyle={{ paddingBottom: bottomPadding }}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.trackListHeader}>
           <Text style={styles.trackListTitle}>Tracks</Text>
         </View>
