@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator
 } from 'react-native';
+import Constants from 'expo-constants';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { useMusicData } from '../hooks/useMusicData';
@@ -98,13 +99,18 @@ export const HomeScreen: React.FC<Props> = ({ navigation }) => {
     );
   }
 
+  const appVersion = Constants.expoConfig?.version || '1.0.0';
+  const buildNumber = Constants.expoConfig?.ios?.buildNumber || Constants.expoConfig?.android?.versionCode || 'N/A';
+
   return (
     <View style={styles.container}>
       <Text style={styles.header}>🎵 Music Library</Text>
       <Text style={styles.subheader}>
         {albums.length} albums • {mixedList.length} items
       </Text>
-      
+      <Text style={styles.versionText}>
+        v{appVersion} (Build: {buildNumber})
+      </Text>
       
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <View style={styles.grid}>
@@ -138,8 +144,15 @@ const styles = StyleSheet.create({
   subheader: {
     fontSize: 16,
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 8,
     color: '#666',
+  },
+  versionText: {
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 20,
+    color: '#999',
+    fontStyle: 'italic',
   },
   loadingText: {
     marginTop: 16,

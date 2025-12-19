@@ -31,17 +31,28 @@ export const AlbumDetailScreen: React.FC<Props> = ({ route }) => {
     console.log('🎵 Playing track:', track.title);
     
     try {
-      await playTrack(track);
-    } catch (error) {
-      console.error('❌ Error playing track:', error);
-      Alert.alert('Error', 'Failed to play track');
+      await playTrack(track, album, index);
+    } catch (error: any) {
+      const errorMessage = error?.message || 'Failed to play track';
+      console.error('❌ Error playing track:', {
+        track: track.title,
+        error: errorMessage,
+        fullError: error
+      });
+      
+      // Show more detailed error message
+      Alert.alert(
+        'Error', 
+        errorMessage,
+        [{ text: 'OK' }]
+      );
     }
   };
 
   const handlePlayAll = async () => {
     if (album.tracks.length > 0) {
       try {
-        await playTrack(album.tracks[0]);
+        await playTrack(album.tracks[0], album, 0);
       } catch (error) {
         console.error('❌ Error playing album:', error);
         Alert.alert('Error', 'Failed to play album');
