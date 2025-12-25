@@ -6,6 +6,7 @@ export interface Track {
   src: string; // URL from backend for streaming
   artist: string;
   key?: string; // S3 key for backend tracks
+  duration?: number; // Duration in seconds (optional, loaded when track is played)
 }
 
 export interface DisplayTrackProps {

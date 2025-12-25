@@ -28,11 +28,93 @@ export const AlbumDetailScreen: React.FC<Props> = ({ route }) => {
   const insets = useSafeAreaInsets();
   const { album } = route.params;
   const { playTrack, currentTrack, isLoading, isPlaying } = useAudio();
+  const [trackDurations, setTrackDurations] = useState<Map<number, number>>(new Map());
   
   // Calculate bottom padding: player bar height (~90px with new layout) + safe area bottom + extra spacing
   const playerBarHeight = 90;
   const extraSpacing = 16; // Extra space for better UX
   const bottomPadding = (currentTrack ? playerBarHeight + extraSpacing : 0) + insets.bottom;
+  
+  // Load duration for the currently playing track
+  useEffect(() => {
+    const loadTrackDuration = async () => {
+      if (currentTrack && currentTrack.src) {
+        try {
+          const { expoAudioService } = await import('../services/expoAudioService');
+          const status = await expoAudioService.getStatus();
+          if (status && status.isLoaded && status.durationMillis) {
+            const durationSeconds = Math.floor(status.durationMillis / 1000);
+            // Find the track index and store duration
+            const trackIndex = album.tracks.findIndex(t => t.title === currentTrack.title);
+            if (trackIndex >= 0) {
+              setTrackDurations(prev => new Map(prev).set(trackIndex, durationSeconds));
+            }
+          }
+        } catch (error) {
+          console.error('Error loading track duration:', error);
+        }
+      }
+    };
+    
+    // Load duration after a short delay to ensure audio is loaded
+    const timer = setTimeout(loadTrackDuration, 500);
+    return () => clearTimeout(timer);
+  }, [currentTrack, album.tracks]);
+
+  // Preload durations for all tracks when album loads
+  useEffect(() => {
+    const preloadDurations = async () => {
+      const { Audio } = await import('expo-av');
+      const durations = new Map<number, number>();
+      
+      // Load durations for tracks (limit concurrent requests)
+      const loadPromises = album.tracks.slice(0, 10).map(async (track, index) => {
+        if (track.src || track.key) {
+          try {
+            const { apiService } = await import('../services/api');
+            const url = track.src || await apiService.getSongUrl(track.key!);
+            
+            // Create a sound object to get metadata without playing
+            const { sound } = await Audio.Sound.createAsync(
+              { uri: url },
+              { shouldPlay: false }
+            );
+            
+            const status = await sound.getStatusAsync();
+            if (status.isLoaded && status.durationMillis) {
+              const durationSeconds = Math.floor(status.durationMillis / 1000);
+              durations.set(index, durationSeconds);
+            }
+            
+            // Unload immediately to free resources
+            await sound.unloadAsync();
+          } catch (error) {
+            // Silently fail for individual tracks
+            console.debug(`Could not load duration for track ${index}:`, error);
+          }
+        }
+      });
+      
+      // Wait for all to complete (or timeout)
+      await Promise.allSettled(loadPromises);
+      
+      // Update state with all loaded durations
+      if (durations.size > 0) {
+        setTrackDurations(prev => {
+          const updated = new Map(prev);
+          durations.forEach((duration, index) => {
+            updated.set(index, duration);
+          });
+          return updated;
+        });
+      }
+    };
+    
+    // Only preload if we don't have durations yet
+    if (trackDurations.size === 0 && album.tracks.length > 0) {
+      preloadDurations();
+    }
+  }, [album.tracks]);
 
   const handleTrackPress = async (track: Track, index: number) => {
     console.log('🎵 Playing track:', track.title);
@@ -75,6 +157,8 @@ export const AlbumDetailScreen: React.FC<Props> = ({ route }) => {
 
   const renderTrack = (track: Track, index: number) => {
     const isCurrentTrack = currentTrack?.title === track.title;
+    const duration = trackDurations.get(index) || track.duration;
+    const durationText = duration ? formatDuration(duration) : null;
     
     return (
       <TouchableOpacity
@@ -96,9 +180,16 @@ export const AlbumDetailScreen: React.FC<Props> = ({ route }) => {
           >
             {track.title}
           </Text>
-          <Text style={styles.trackArtist} numberOfLines={1}>
-            {track.artist}
-          </Text>
+          <View style={styles.trackMeta}>
+            <Text style={styles.trackArtist} numberOfLines={1}>
+              {track.artist}
+            </Text>
+            {durationText && (
+              <Text style={[styles.trackDuration, isCurrentTrack && styles.currentTrackDuration]}>
+                {durationText}
+              </Text>
+            )}
+          </View>
         </View>
         
         <View style={styles.trackActions}>
@@ -281,9 +372,22 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 4,
   },
+  trackMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
   trackArtist: {
     fontSize: 14,
     color: '#666',
+    marginRight: 8,
+  },
+  trackDuration: {
+    fontSize: 13,
+    color: '#999',
+  },
+  currentTrackDuration: {
+    color: '#007AFF',
   },
   trackActions: {
     width: 40,
