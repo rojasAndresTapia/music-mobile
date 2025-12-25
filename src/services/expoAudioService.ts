@@ -165,10 +165,29 @@ export class ExpoAudioService {
         sound.setOnPlaybackStatusUpdate((status) => {
           // Log important status changes
           if (status.isLoaded) {
-            if (status.isPlaying === false && status.didJustFinish === false) {
-              console.warn('⚠️ Audio stopped playing unexpectedly:', {
-                position: status.positionMillis,
-                duration: status.durationMillis,
+            const position = status.positionMillis || 0;
+            const duration = status.durationMillis || 0;
+            const isPlaying = status.isPlaying || false;
+            const didJustFinish = status.didJustFinish || false;
+            
+            // Log when track finishes
+            if (didJustFinish) {
+              console.log('🎵 [AUDIO SERVICE] Track finished detected in audio service', {
+                track: track.title,
+                position: `${Math.floor(position / 1000)}s`,
+                duration: `${Math.floor(duration / 1000)}s`,
+                isPlaying
+              });
+            }
+            
+            // Log if audio stopped unexpectedly
+            if (isPlaying === false && didJustFinish === false && position > 0) {
+              const progress = duration > 0 ? (position / duration * 100).toFixed(1) : 'unknown';
+              console.warn('⚠️ [AUDIO SERVICE] Audio stopped playing unexpectedly:', {
+                track: track.title,
+                position: `${Math.floor(position / 1000)}s`,
+                duration: `${Math.floor(duration / 1000)}s`,
+                progress: `${progress}%`,
                 error: (status as any).error
               });
             }

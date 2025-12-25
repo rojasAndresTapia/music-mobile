@@ -51,22 +51,50 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
     const album = currentAlbumRef.current;
     const trackIndex = currentTrackIndexRef.current;
     const playTrackFn = playTrackRef.current;
+    const currentTrackTitle = currentTrack?.title || 'Unknown';
+
+    console.log('🎵 [TRACK FINISHED HANDLER] Called', {
+      hasAlbum: !!album,
+      trackIndex,
+      albumTracksCount: album?.tracks.length || 0,
+      currentTrack: currentTrackTitle,
+      appState: AppState.currentState
+    });
 
     if (album && trackIndex >= 0 && playTrackFn) {
       const nextIndex = trackIndex + 1;
       if (nextIndex < album.tracks.length) {
-        console.log(`🎵 Auto-playing next track: ${nextIndex + 1}/${album.tracks.length}`);
+        const nextTrack = album.tracks[nextIndex];
+        console.log(`🎵 [AUTO-PLAY] Starting next track: ${nextIndex + 1}/${album.tracks.length}`, {
+          nextTrackTitle: nextTrack.title,
+          nextTrackArtist: nextTrack.artist,
+          appState: AppState.currentState
+        });
         try {
-          await playTrackFn(album.tracks[nextIndex], album, nextIndex);
-        } catch (error) {
-          console.error('❌ Error auto-playing next track:', error);
+          await playTrackFn(nextTrack, album, nextIndex);
+          console.log(`✅ [AUTO-PLAY] Successfully started next track: ${nextTrack.title}`);
+        } catch (error: any) {
+          console.error('❌ [AUTO-PLAY] Error auto-playing next track:', {
+            error: error?.message,
+            nextTrack: nextTrack.title,
+            fullError: error
+          });
         }
       } else {
-        console.log('🎵 Reached end of album');
+        console.log('🎵 [END OF ALBUM] Reached end of album - stopping playback', {
+          totalTracks: album.tracks.length,
+          lastTrackIndex: trackIndex
+        });
         setIsPlaying(false);
       }
+    } else {
+      console.warn('⚠️ [TRACK FINISHED] Cannot auto-play next track:', {
+        hasAlbum: !!album,
+        trackIndex,
+        hasPlayTrackFn: !!playTrackFn
+      });
     }
-  }, []);
+  }, [currentTrack]);
 
   // Initialize audio service and set up playback status listener
   useEffect(() => {
@@ -81,21 +109,58 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
           if (status.isLoaded) {
             const wasPlaying = isPlaying;
             const nowPlaying = status.isPlaying || false;
+            const positionMillis = status.positionMillis || 0;
+            const durationMillis = status.durationMillis || 0;
+            const didJustFinish = status.didJustFinish || false;
+            const appState = AppState.currentState;
+
             setIsPlaying(nowPlaying);
 
             // Log state changes
             if (wasPlaying !== nowPlaying) {
-              console.log(`🔄 Playback state changed: ${wasPlaying} → ${nowPlaying}`);
+              console.log(`🔄 [STATUS UPDATE] Playback state changed: ${wasPlaying} → ${nowPlaying}`, {
+                appState,
+                position: `${Math.floor(positionMillis / 1000)}s`,
+                duration: `${Math.floor(durationMillis / 1000)}s`
+              });
             }
 
-            // Check if track just finished
-            if (status.didJustFinish && !status.isLooping) {
-              console.log('🎵 Track finished, playing next...');
+            // Check if track just finished (primary method)
+            if (didJustFinish && !status.isLooping) {
+              console.log('🎵 [STATUS UPDATE] Track finished (didJustFinish=true), playing next...', {
+                appState,
+                currentTrack: currentTrack?.title,
+                position: positionMillis,
+                duration: durationMillis
+              });
               // Automatically play next track using refs to get latest values
               handleTrackFinished();
             }
+            // Fallback: Check if position reached duration (for background scenarios)
+            else if (durationMillis > 0 && positionMillis >= durationMillis - 100 && wasPlaying && !nowPlaying) {
+              // Allow 100ms tolerance for timing issues
+              console.log('🎵 [STATUS UPDATE] Track finished (position reached duration), playing next...', {
+                appState,
+                currentTrack: currentTrack?.title,
+                position: positionMillis,
+                duration: durationMillis,
+                difference: durationMillis - positionMillis
+              });
+              // Small delay to ensure didJustFinish wasn't just about to fire
+              setTimeout(() => {
+                expoAudioService.getStatus().then((latestStatus) => {
+                  if (latestStatus && latestStatus.isLoaded && !latestStatus.isPlaying && !latestStatus.didJustFinish) {
+                    console.log('🎵 [FALLBACK] Confirmed track finished, triggering next track');
+                    handleTrackFinished();
+                  }
+                });
+              }, 200);
+            }
           } else if ((status as any).error) {
-            console.error('❌ Playback error in status update:', (status as any).error);
+            console.error('❌ [STATUS UPDATE] Playback error:', {
+              error: (status as any).error,
+              appState: AppState.currentState
+            });
           }
         });
         console.log('✅ Playback status listener configured');
@@ -180,7 +245,7 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
     };
   }, [currentTrack, isPlaying]);
 
-  // Monitor audio status (fallback, but playback status update is primary)
+  // Monitor audio status (fallback for background scenarios)
   useEffect(() => {
     const checkAudioStatus = async () => {
       try {
@@ -188,14 +253,40 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
         if (status && status.isLoaded) {
           const wasPlaying = isPlaying;
           const nowPlaying = status.isPlaying || false;
+          const positionMillis = status.positionMillis || 0;
+          const durationMillis = status.durationMillis || 0;
+          const appState = AppState.currentState;
+          
           setIsPlaying(nowPlaying);
+          
+          // Check if track finished in background (position reached duration)
+          if (wasPlaying && !nowPlaying && durationMillis > 0 && positionMillis >= durationMillis - 500) {
+            // Allow 500ms tolerance for background timing
+            console.log('🎵 [BACKGROUND CHECK] Track appears to have finished', {
+              appState,
+              currentTrack: currentTrack?.title,
+              position: `${Math.floor(positionMillis / 1000)}s`,
+              duration: `${Math.floor(durationMillis / 1000)}s`,
+              difference: `${Math.floor((durationMillis - positionMillis) / 1000)}s`
+            });
+            
+            // Double-check with a small delay
+            setTimeout(async () => {
+              const latestStatus = await expoAudioService.getStatus();
+              if (latestStatus && latestStatus.isLoaded && !latestStatus.isPlaying && !latestStatus.didJustFinish) {
+                console.log('🎵 [BACKGROUND CHECK] Confirmed - triggering next track');
+                handleTrackFinished();
+              }
+            }, 300);
+          }
           
           // Log if playback state changed unexpectedly
           if (wasPlaying !== nowPlaying && currentTrack) {
-            console.log(`🔄 Audio playback state changed: ${wasPlaying} → ${nowPlaying}`, {
+            console.log(`🔄 [STATUS CHECK] Audio playback state changed: ${wasPlaying} → ${nowPlaying}`, {
               track: currentTrack.title,
-              position: status.positionMillis,
-              duration: status.durationMillis
+              appState,
+              position: `${Math.floor(positionMillis / 1000)}s`,
+              duration: `${Math.floor(durationMillis / 1000)}s`
             });
           }
         }
@@ -204,9 +295,10 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
       }
     };
 
-    const interval = setInterval(checkAudioStatus, 2000); // Less frequent since we have status updates
+    // Check more frequently when app is in background to catch track finishes
+    const interval = setInterval(checkAudioStatus, 1500);
     return () => clearInterval(interval);
-  }, [currentTrack, isPlaying]);
+  }, [currentTrack, isPlaying, handleTrackFinished]);
 
   const playTrack = useCallback(async (track: Track, album?: AlbumListProps, trackIndex?: number) => {
     try {
