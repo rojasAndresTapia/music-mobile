@@ -285,7 +285,28 @@ export class ExpoAudioService {
 
   async setPosition(positionMillis: number) {
     if (this.sound) {
-      await this.sound.setPositionAsync(positionMillis);
+      try {
+        console.log(`🎵 [AUDIO SERVICE] Setting position to ${positionMillis}ms`);
+        await this.sound.setPositionAsync(positionMillis);
+        
+        // Verify the position was set
+        const status = await this.sound.getStatusAsync();
+        if (status && status.isLoaded) {
+          const actualPosition = status.positionMillis || 0;
+          console.log(`✅ [AUDIO SERVICE] Position set. Actual: ${actualPosition}ms, Expected: ${positionMillis}ms`);
+          
+          // If there's a significant difference, try again
+          if (Math.abs(actualPosition - positionMillis) > 500) {
+            console.warn(`⚠️ [AUDIO SERVICE] Position mismatch, retrying...`);
+            await this.sound.setPositionAsync(positionMillis);
+          }
+        }
+      } catch (error: any) {
+        console.error('❌ [AUDIO SERVICE] Error setting position:', error?.message || error);
+        throw error;
+      }
+    } else {
+      console.warn('⚠️ [AUDIO SERVICE] Cannot set position - no sound loaded');
     }
   }
 

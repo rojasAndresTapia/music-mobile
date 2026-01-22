@@ -2,7 +2,7 @@
   "expo": {
     "name": "music-mobile",
     "slug": "music-mobile",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "orientation": "portrait",
     "icon": "./assets/music-app-icon.png",
     "userInterfaceStyle": "light",
@@ -17,7 +17,7 @@
     },
     "android": {
       "package": "com.rojastapiaandres.musicmobile",
-      "versionCode": 9,
+      "versionCode": 10,
       "adaptiveIcon": {
         "foregroundImage": "./assets/music-app-icon.png",
         "backgroundColor": "#000000"
