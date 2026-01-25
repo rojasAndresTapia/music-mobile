@@ -30,21 +30,18 @@ export class ExpoAudioService {
       // Set platform-specific properties
       if (Platform.OS === 'ios') {
         audioModeConfig.allowsRecordingIOS = false;
-        audioModeConfig.interruptionModeIOS = Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX;
         audioModeConfig.playsInSilentModeIOS = true;
+        // Set interruption mode if available
+        if ((Audio as any).INTERRUPTION_MODE_IOS_DO_NOT_MIX !== undefined) {
+          audioModeConfig.interruptionModeIOS = (Audio as any).INTERRUPTION_MODE_IOS_DO_NOT_MIX;
+        }
         console.log('📱 Configured iOS audio properties');
       } else if (Platform.OS === 'android') {
-        // Only set Android properties that are definitely supported
         audioModeConfig.shouldDuckAndroid = true;
         audioModeConfig.playThroughEarpieceAndroid = false;
-        
-        // Try to set interruption mode, but handle if it's not available
-        try {
-          if (Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX !== undefined) {
-            audioModeConfig.interruptionModeAndroid = Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX;
-          }
-        } catch (e) {
-          console.warn('⚠️ INTERRUPTION_MODE_ANDROID_DO_NOT_MIX not available, skipping');
+        // Set interruption mode if available
+        if ((Audio as any).INTERRUPTION_MODE_ANDROID_DO_NOT_MIX !== undefined) {
+          audioModeConfig.interruptionModeAndroid = (Audio as any).INTERRUPTION_MODE_ANDROID_DO_NOT_MIX;
         }
         console.log('🤖 Configured Android audio properties');
       }
@@ -104,14 +101,15 @@ export class ExpoAudioService {
         // Set platform-specific properties
         if (Platform.OS === 'ios') {
           audioModeConfig.allowsRecordingIOS = false;
-          audioModeConfig.interruptionModeIOS = Audio.INTERRUPTION_MODE_IOS_DO_NOT_MIX;
           audioModeConfig.playsInSilentModeIOS = true;
+          if ((Audio as any).INTERRUPTION_MODE_IOS_DO_NOT_MIX !== undefined) {
+            audioModeConfig.interruptionModeIOS = (Audio as any).INTERRUPTION_MODE_IOS_DO_NOT_MIX;
+          }
         } else if (Platform.OS === 'android') {
           audioModeConfig.shouldDuckAndroid = true;
           audioModeConfig.playThroughEarpieceAndroid = false;
-          // Only set if available
-          if (Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX !== undefined) {
-            audioModeConfig.interruptionModeAndroid = Audio.INTERRUPTION_MODE_ANDROID_DO_NOT_MIX;
+          if ((Audio as any).INTERRUPTION_MODE_ANDROID_DO_NOT_MIX !== undefined) {
+            audioModeConfig.interruptionModeAndroid = (Audio as any).INTERRUPTION_MODE_ANDROID_DO_NOT_MIX;
           }
         }
 
@@ -143,12 +141,13 @@ export class ExpoAudioService {
       console.log('📥 Creating audio sound object...');
       // Create and load new sound with background playback enabled
       // Configure for high-quality audio playback
+      // Use shorter update interval for better background detection
       const { sound } = await Audio.Sound.createAsync(
         { uri: streamingUrl },
         { 
           shouldPlay: true, 
           isLooping: false,
-          progressUpdateIntervalMillis: 1000,
+          progressUpdateIntervalMillis: 500, // Check every 500ms for better background detection
           volume: 1.0, // Full volume (0.0 to 1.0)
           rate: 1.0, // Normal playback speed (0.5 to 2.0)
           shouldCorrectPitch: true, // Maintain pitch when changing rate
@@ -160,39 +159,39 @@ export class ExpoAudioService {
       this.sound = sound;
       this.currentTrack = track;
 
-      // Set up playback status update listener with enhanced logging
+      // Set up playback status update listener
       if (this.onPlaybackStatusUpdateCallback) {
         sound.setOnPlaybackStatusUpdate((status) => {
-          // Log important status changes
           if (status.isLoaded) {
             const position = status.positionMillis || 0;
             const duration = status.durationMillis || 0;
             const isPlaying = status.isPlaying || false;
             const didJustFinish = status.didJustFinish || false;
-            
-            // Log when track finishes
+
+            // Log when track finishes (critical for debugging)
             if (didJustFinish) {
-              console.log('🎵 [AUDIO SERVICE] Track finished detected in audio service', {
+              console.log('🎵 [AUDIO SERVICE] Track finished', {
+                timestamp: new Date().toISOString(),
                 track: track.title,
                 position: `${Math.floor(position / 1000)}s`,
-                duration: `${Math.floor(duration / 1000)}s`,
-                isPlaying
+                duration: `${Math.floor(duration / 1000)}s`
               });
             }
-            
-            // Log if audio stopped unexpectedly
-            if (isPlaying === false && didJustFinish === false && position > 0) {
-              const progress = duration > 0 ? (position / duration * 100).toFixed(1) : 'unknown';
-              console.warn('⚠️ [AUDIO SERVICE] Audio stopped playing unexpectedly:', {
-                track: track.title,
-                position: `${Math.floor(position / 1000)}s`,
-                duration: `${Math.floor(duration / 1000)}s`,
-                progress: `${progress}%`,
-                error: (status as any).error
-              });
+
+            // Log if audio stopped unexpectedly (for debugging)
+            if (!isPlaying && !didJustFinish && position > 0 && duration > 0) {
+              const remaining = duration - position;
+              if (remaining < 5000) { // Only log if close to end
+                console.warn('⚠️ [AUDIO SERVICE] Audio stopped near end', {
+                  timestamp: new Date().toISOString(),
+                  track: track.title,
+                  remaining: `${Math.floor(remaining / 1000)}s`,
+                  error: (status as any).error
+                });
+              }
             }
           }
-          
+
           // Call the original callback
           this.onPlaybackStatusUpdateCallback!(status);
         });
