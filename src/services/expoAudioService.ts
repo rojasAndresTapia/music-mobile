@@ -229,21 +229,33 @@ export class ExpoAudioService {
       }
     } catch (error: any) {
       const errorMessage = error?.message || 'Unknown error loading audio';
-      console.error('❌ Error playing track:', {
+      const errorCode = error?.code || error?.status || 'N/A';
+      const errorName = error?.name || 'Unknown';
+      
+      console.error('❌ [AUDIO SERVICE] Error playing track:', {
         track: track.title,
-        url: streamingUrl?.substring(0, 100),
+        artist: track.artist,
+        album: track.album,
+        url: streamingUrl?.substring(0, 150),
         error: errorMessage,
-        errorCode: error?.code,
-        fullError: error
+        errorCode,
+        errorName,
+        errorType: typeof error,
+        fullError: error,
+        stack: error?.stack
       });
       
       // Provide more specific error messages
-      if (errorMessage.includes('Network') || errorMessage.includes('fetch')) {
+      if (errorMessage.includes('Network') || errorMessage.includes('fetch') || errorMessage.includes('ECONNREFUSED')) {
         throw new Error('Network error: Could not connect to audio server. Check your internet connection.');
       } else if (errorMessage.includes('404') || errorMessage.includes('Not Found')) {
-        throw new Error('Audio file not found on server');
-      } else if (errorMessage.includes('format') || errorMessage.includes('codec')) {
+        throw new Error(`Audio file not found on server. Track: "${track.title}"`);
+      } else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
+        throw new Error(`Access denied to audio file. Track: "${track.title}"`);
+      } else if (errorMessage.includes('format') || errorMessage.includes('codec') || errorMessage.includes('unsupported')) {
         throw new Error('Audio format not supported');
+      } else if (errorMessage.includes('timeout') || errorMessage.includes('TIMEOUT')) {
+        throw new Error('Request timeout: Server took too long to respond');
       } else {
         throw new Error(`Failed to load audio: ${errorMessage}`);
       }

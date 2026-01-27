@@ -15,6 +15,7 @@ import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { Track } from '../types/Track';
 import { useAudio } from '../context/AudioContext';
+import { PlayButtons } from '../components/PlayButtons';
 
 type AlbumDetailScreenRouteProp = RouteProp<RootStackParamList, 'AlbumDetail'>;
 type AlbumDetailScreenNavigationProp = StackNavigationProp<RootStackParamList, 'AlbumDetail'>;
@@ -27,8 +28,51 @@ interface Props {
 export const AlbumDetailScreen: React.FC<Props> = ({ route }) => {
   const insets = useSafeAreaInsets();
   const { album } = route.params;
-  const { playTrack, currentTrack, isLoading, isPlaying } = useAudio();
+  const { playTrack, playShuffled, currentTrack, currentAlbum, isLoading, isPlaying, isShuffled } = useAudio();
   const [trackDurations, setTrackDurations] = useState<Map<number, number>>(new Map());
+  
+  // Check if shuffle is active for this specific album
+  // We check if the current album matches this album (by name and author)
+  // and if shuffle mode is active
+  const isShuffleActive = React.useMemo(() => {
+    // If shuffle is not active, definitely not active
+    if (!isShuffled) {
+      console.log('🔀 [AlbumDetailScreen] Shuffle not active - isShuffled is false');
+      return false;
+    }
+    
+    // If there's no current track or album, can't determine
+    if (!currentTrack || !currentAlbum) {
+      console.log('🔀 [AlbumDetailScreen] No current track/album to compare');
+      return false;
+    }
+    
+    // Check if current track belongs to the album we're viewing
+    // This works even if the album is shuffled because we check by track properties
+    const trackBelongsToAlbum = album.tracks.some(
+      track => track.title === currentTrack.title && track.artist === currentTrack.artist
+    );
+    
+    // Also check if album name and author match (additional verification)
+    const albumMatches = currentAlbum.album === album.album && 
+                        currentAlbum.author === album.author;
+    
+    const result = trackBelongsToAlbum && albumMatches;
+    
+    console.log('🔀 [AlbumDetailScreen] Shuffle state check:', {
+      isShuffled,
+      trackBelongsToAlbum,
+      albumMatches,
+      currentTrack: currentTrack.title,
+      currentAlbum: currentAlbum.album,
+      viewingAlbum: album.album,
+      currentAuthor: currentAlbum.author,
+      viewingAuthor: album.author,
+      result,
+    });
+    
+    return result;
+  }, [isShuffled, currentTrack, currentAlbum, album]);
   
   // Calculate bottom padding: player bar height (~90px with new layout) + safe area bottom + extra spacing
   const playerBarHeight = 90;
@@ -149,6 +193,17 @@ export const AlbumDetailScreen: React.FC<Props> = ({ route }) => {
     }
   };
 
+  const handleShuffle = async () => {
+    if (album.tracks.length > 0) {
+      try {
+        await playShuffled(album);
+      } catch (error) {
+        console.error('❌ Error shuffling album:', error);
+        Alert.alert('Error', 'Failed to shuffle album');
+      }
+    }
+  };
+
   const formatDuration = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -226,15 +281,13 @@ export const AlbumDetailScreen: React.FC<Props> = ({ route }) => {
         </View>
       </View>
 
-      {/* Play All Button */}
-      <TouchableOpacity
-        style={styles.playAllButton}
-        onPress={handlePlayAll}
-        disabled={isLoading}
-      >
-        <Text style={styles.playAllIcon}>▶️</Text>
-        <Text style={styles.playAllText}>Play All</Text>
-      </TouchableOpacity>
+      {/* Play All and Shuffle Buttons */}
+      <PlayButtons
+        onPlayAll={handlePlayAll}
+        onShuffle={handleShuffle}
+        isLoading={isLoading}
+        isShuffled={isShuffleActive}
+      />
 
       {/* Track List */}
       <ScrollView 
@@ -295,32 +348,6 @@ const styles = StyleSheet.create({
   albumStats: {
     fontSize: 14,
     color: '#999',
-  },
-  playAllButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#007AFF',
-    margin: 20,
-    padding: 16,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  playAllIcon: {
-    fontSize: 18,
-    marginRight: 8,
-  },
-  playAllText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold',
   },
   trackList: {
     flex: 1,

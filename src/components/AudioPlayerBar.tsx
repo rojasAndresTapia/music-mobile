@@ -20,6 +20,7 @@ export const AudioPlayerBar: React.FC<Props> = ({ visible }) => {
   const { 
     currentTrack, 
     isPlaying, 
+    isShuffled,
     pauseTrack, 
     resumeTrack,
     skipToNext,
@@ -295,9 +296,14 @@ export const AudioPlayerBar: React.FC<Props> = ({ visible }) => {
       <View style={styles.playerContent}>
         {/* Track Info - Above Controls */}
         <View style={styles.trackInfo}>
-          <Text style={styles.trackTitle} numberOfLines={1}>
-            {currentTrack.title || 'Unknown Track'}
-          </Text>
+          <View style={styles.trackTitleRow}>
+            <Text style={styles.trackTitle} numberOfLines={1}>
+              {currentTrack.title || 'Unknown Track'}
+            </Text>
+            {isShuffled && (
+              <Text style={styles.shuffleIndicator}>🔀</Text>
+            )}
+          </View>
           <Text style={styles.trackArtist} numberOfLines={1}>
             {currentTrack.artist || 'Unknown Artist'}
           </Text>
@@ -411,12 +417,24 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     paddingHorizontal: 8,
   },
+  trackTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
   trackTitle: {
     fontSize: 15,
     fontWeight: '600',
     color: '#333',
     marginBottom: 2,
     textAlign: 'center',
+    flexShrink: 1,
+  },
+  shuffleIndicator: {
+    fontSize: 14,
+    marginLeft: 6,
+    marginBottom: 2,
   },
   trackArtist: {
     fontSize: 13,

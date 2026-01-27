@@ -4,6 +4,7 @@ import { Track } from '../types/Track';
 import { AlbumListProps } from '../types/Album';
 import { expoAudioService } from '../services/expoAudioService';
 import { Audio, AVPlaybackStatus } from 'expo-av';
+import { createShuffledPlaylist } from '../utils/trackUtils';
 
 interface AudioContextType {
   currentTrack: Track | null;
@@ -11,7 +12,9 @@ interface AudioContextType {
   currentTrackIndex: number;
   isPlaying: boolean;
   isLoading: boolean;
+  isShuffled: boolean;
   playTrack: (track: Track, album?: AlbumListProps, trackIndex?: number) => Promise<void>;
+  playShuffled: (album: AlbumListProps) => Promise<void>;
   pauseTrack: () => Promise<void>;
   resumeTrack: () => Promise<void>;
   skipToNext: () => Promise<void>;
@@ -30,14 +33,17 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
   const [currentTrackIndex, setCurrentTrackIndex] = useState(-1);
   const [isLoading, setIsLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isShuffled, setIsShuffled] = useState(false);
 
   // Use refs to access latest values in callbacks (critical for background execution)
   const currentAlbumRef = useRef<AlbumListProps | null>(null);
   const currentTrackIndexRef = useRef(-1);
-  const playTrackRef = useRef<((track: Track, album?: AlbumListProps, trackIndex?: number) => Promise<void>) | null>(null);
+  const playTrackRef = useRef<((track: Track, album?: AlbumListProps, trackIndex?: number, retryCount?: number, isFromShuffle?: boolean) => Promise<void>) | null>(null);
   const trackFinishedTriggeredRef = useRef<string | null>(null);
   const lastKnownPositionRef = useRef<number>(0);
   const lastKnownDurationRef = useRef<number>(0);
+  const shuffledIndexMapRef = useRef<Map<number, number>>(new Map()); // Maps shuffled index to original index
+  const isShuffledRef = useRef<boolean>(false); // Ref to track shuffle state for immediate access
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -47,6 +53,11 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
   useEffect(() => {
     currentTrackIndexRef.current = currentTrackIndex;
   }, [currentTrackIndex]);
+
+  useEffect(() => {
+    isShuffledRef.current = isShuffled;
+    console.log('🔀 [STATE] isShuffled state updated:', isShuffled);
+  }, [isShuffled]);
 
   // Handle track finished - play next track if available
   const handleTrackFinished = useCallback(async () => {
@@ -83,10 +94,13 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
     }
 
     const nextTrack = album.tracks[nextIndex];
+    const currentlyShuffled = isShuffledRef.current;
+    
     console.log('🎵 [AUTO-PLAY] Starting next track', {
       nextTrack: nextTrack.title,
       index: `${nextIndex + 1}/${album.tracks.length}`,
-      appState
+      appState,
+      isShuffled: currentlyShuffled
     });
 
     try {
@@ -106,10 +120,19 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
         }
       }
 
-      await playTrackFn(nextTrack, album, nextIndex);
+      // If shuffle is active, pass isFromShuffle flag to maintain shuffle state
+      if (currentlyShuffled) {
+        console.log('🔀 [AUTO-PLAY] Shuffle active - maintaining shuffle state for next track');
+        // Call playTrack with isFromShuffle flag to preserve shuffle state
+        await playTrackFn(nextTrack, album, nextIndex, 0, true);
+      } else {
+        await playTrackFn(nextTrack, album, nextIndex);
+      }
+      
       console.log('✅ [AUTO-PLAY] Next track started successfully', {
         track: nextTrack.title,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        shuffleMaintained: currentlyShuffled
       });
       trackFinishedTriggeredRef.current = null;
     } catch (error: any) {
@@ -132,14 +155,20 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
         const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
           if (nextAppState === 'active') {
             subscription.remove();
-            setTimeout(async () => {
-              try {
-                await playTrackFn(nextTrack, album, nextIndex);
-              } catch (retryError) {
-                console.error('❌ [AUTO-PLAY] Retry failed:', retryError);
-                setIsPlaying(false);
-              }
-            }, 500);
+                  setTimeout(async () => {
+                    try {
+                      // Maintain shuffle state on retry if shuffle was active
+                      const wasShuffled = isShuffledRef.current;
+                      if (wasShuffled) {
+                        await playTrack(nextTrack, album, nextIndex, 0, true);
+                      } else {
+                        await playTrackFn(nextTrack, album, nextIndex);
+                      }
+                    } catch (retryError) {
+                      console.error('❌ [AUTO-PLAY] Retry failed:', retryError);
+                      setIsPlaying(false);
+                    }
+                  }, 500);
           }
         });
       } else {
@@ -348,7 +377,7 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
     return () => clearInterval(interval);
   }, [currentTrack, handleTrackFinished]);
 
-  const playTrack = useCallback(async (track: Track, album?: AlbumListProps, trackIndex?: number, retryCount: number = 0) => {
+  const playTrack = useCallback(async (track: Track, album?: AlbumListProps, trackIndex?: number, retryCount: number = 0, isFromShuffle: boolean = false) => {
     const maxRetries = 3;
     const retryDelay = 1000 * (retryCount + 1);
 
@@ -358,8 +387,50 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
       trackFinishedTriggeredRef.current = null; // Reset trigger for new track
 
       if (album !== undefined) {
-        setCurrentAlbum(album);
-        currentAlbumRef.current = album;
+        // Check if this is a different album (not just a different track in the same album)
+        const isNewAlbum = currentAlbum?.album !== album.album || currentAlbum?.author !== album.author;
+        
+        // Use ref to get current shuffle state (avoids race condition with async state updates)
+        const currentlyShuffled = isShuffledRef.current;
+        
+        // If this call is from playShuffled, don't reset shuffle state
+        if (isFromShuffle) {
+          console.log('🔀 [PLAY] Called from shuffle - maintaining shuffle state');
+          setCurrentAlbum(album);
+          currentAlbumRef.current = album;
+        } else {
+          // If we're in shuffle mode, check if user is manually selecting from original album
+          let isExitingShuffle = false;
+          if (currentlyShuffled && !isNewAlbum && currentAlbum && album.tracks.length === currentAlbum.tracks.length) {
+            // Check if tracks match in order - if they match, it's the same shuffled album (continue shuffle)
+            // If they don't match, user likely selected from original album (exit shuffle)
+            const tracksMatch = album.tracks.every((track, index) => 
+              currentAlbum.tracks[index]?.title === track.title &&
+              currentAlbum.tracks[index]?.artist === track.artist
+            );
+            
+            // If tracks don't match AND we have a shuffle map, user likely selected from original album
+            if (!tracksMatch && shuffledIndexMapRef.current.size > 0) {
+              isExitingShuffle = true;
+              console.log('🔀 [PLAY] Detected exit from shuffle mode - tracks don\'t match');
+            } else if (tracksMatch) {
+              console.log('🔀 [PLAY] Same shuffled album - maintaining shuffle mode');
+            }
+          }
+          
+          setCurrentAlbum(album);
+          currentAlbumRef.current = album;
+          
+          // Reset shuffle state if it's a new album or user is exiting shuffle mode
+          if (isNewAlbum || isExitingShuffle) {
+            console.log('🔀 [PLAY] Resetting shuffle state', { isNewAlbum, isExitingShuffle, currentlyShuffled });
+            shuffledIndexMapRef.current.clear();
+            setIsShuffled(false);
+            isShuffledRef.current = false;
+          } else if (currentlyShuffled) {
+            console.log('🔀 [PLAY] Shuffle mode maintained - isShuffled:', currentlyShuffled);
+          }
+        }
       }
       if (trackIndex !== undefined) {
         setCurrentTrackIndex(trackIndex);
@@ -370,12 +441,24 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
       let streamingUrl = track.src;
       if (!streamingUrl) {
         if (!track.key) {
+          console.error('❌ [PLAY] Track missing key:', {
+            track: track.title,
+            artist: track.artist,
+            album: track.album
+          });
           throw new Error(`Track "${track.title}" does not have a valid key for streaming`);
         }
 
         try {
+          console.log('🔗 [PLAY] Getting streaming URL for track:', {
+            track: track.title,
+            artist: track.artist,
+            album: track.album,
+            key: track.key
+          });
           const { getTrackStreamingUrl } = await import('../utils/dataTransformers');
           streamingUrl = await getTrackStreamingUrl(track);
+          console.log('✅ [PLAY] Got streaming URL:', streamingUrl.substring(0, 150));
           track.src = streamingUrl; // Cache it
         } catch (urlError: any) {
           const errorMsg = urlError?.message || 'Unknown error';
@@ -384,10 +467,20 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
                                 errorMsg.includes('Network') ||
                                 errorMsg.includes('fetch');
 
+          console.error('❌ [PLAY] Error getting streaming URL:', {
+            track: track.title,
+            artist: track.artist,
+            album: track.album,
+            key: track.key,
+            error: errorMsg,
+            fullError: urlError,
+            isNetworkError
+          });
+
           if (isNetworkError && retryCount < maxRetries) {
             console.warn(`⚠️ [PLAY] Network error getting URL (retry ${retryCount + 1}/${maxRetries})`);
             await new Promise(resolve => setTimeout(resolve, retryDelay));
-            return playTrack(track, album, trackIndex, retryCount + 1);
+            return playTrack(track, album, trackIndex, retryCount + 1, isFromShuffle);
           }
 
           throw new Error(`Network error: Could not connect to music server.`);
@@ -419,7 +512,7 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
       if (isNetworkError && retryCount < maxRetries) {
         console.warn(`⚠️ [PLAY] Network error (retry ${retryCount + 1}/${maxRetries})`);
         await new Promise(resolve => setTimeout(resolve, retryDelay));
-        return playTrack(track, album, trackIndex, retryCount + 1);
+        return playTrack(track, album, trackIndex, retryCount + 1, isFromShuffle);
       }
 
       throw new Error(errorMessage);
@@ -450,6 +543,43 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
     }
   };
 
+  const playShuffled = useCallback(async (album: AlbumListProps) => {
+    if (album.tracks.length === 0) {
+      console.warn('⚠️ [SHUFFLE] Album has no tracks');
+      return;
+    }
+
+    try {
+      console.log('🔀 [SHUFFLE] Creating shuffled playlist for album:', album.album);
+      const { shuffledTracks, originalIndexMap } = createShuffledPlaylist(album.tracks);
+      
+      // Create a new album object with shuffled tracks
+      const shuffledAlbum: AlbumListProps = {
+        ...album,
+        tracks: shuffledTracks,
+      };
+
+      // Store the index mapping for navigation
+      shuffledIndexMapRef.current = originalIndexMap;
+      
+      // Set shuffle state using both state and ref (ref for immediate access, state for UI)
+      isShuffledRef.current = true;
+      setIsShuffled(true);
+      console.log('🔀 [SHUFFLE] Shuffle state set to TRUE (both ref and state)');
+
+      // Play the first track from the shuffled playlist
+      // Pass isFromShuffle=true to prevent playTrack from resetting shuffle state
+      await playTrack(shuffledTracks[0], shuffledAlbum, 0, 0, true);
+      
+      // Verify shuffle state is still true after playTrack
+      console.log('✅ [SHUFFLE] Started shuffled playback, isShuffled:', isShuffledRef.current);
+    } catch (error: any) {
+      console.error('❌ [SHUFFLE] Error starting shuffled playback:', error);
+      setIsShuffled(false);
+      throw error;
+    }
+  }, [playTrack]);
+
   const skipToNext = async () => {
     if (currentAlbum && currentTrackIndex >= 0) {
       const nextIndex = currentTrackIndex + 1;
@@ -472,7 +602,9 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
     currentTrackIndex,
     isPlaying,
     isLoading,
+    isShuffled,
     playTrack,
+    playShuffled,
     pauseTrack,
     resumeTrack,
     skipToNext,
