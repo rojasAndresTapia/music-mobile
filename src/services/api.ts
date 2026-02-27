@@ -69,8 +69,16 @@ class ApiService {
   }
 
   getImageUrl(key: string): string {
-    // Use the image proxy endpoint directly instead of signed URLs
     return `${this.baseUrl}/image-proxy?key=${encodeURIComponent(key)}`;
+  }
+
+  /** Lightweight ping to keep backend connection alive in background (may reduce DNS/network drops) */
+  async keepAlive(): Promise<void> {
+    try {
+      await fetch(`${this.baseUrl}/test`, { method: 'GET' });
+    } catch {
+      // Ignore - we only want to try to keep connection warm
+    }
   }
 }
 

@@ -8,6 +8,9 @@ export class ExpoAudioService {
   private currentTrack: Track | null = null;
   private isInitialized = false;
   private onPlaybackStatusUpdateCallback: ((status: AVPlaybackStatus) => void) | null = null;
+  /** Preloaded next track (loaded while current is playing to avoid background load failure) */
+  private preloadedSound: Audio.Sound | null = null;
+  private preloadedUrl: string | null = null;
 
   static getInstance(): ExpoAudioService {
     if (!ExpoAudioService.instance) {
@@ -22,28 +25,26 @@ export class ExpoAudioService {
     try {
       console.log(`🔧 Initializing audio service on ${Platform.OS}...`);
       
-      // Configure audio mode for playback - platform-specific and defensive
+      // Configure audio mode for playback. Set all params so Android respects background playback
+      // (some devices ignore background audio if only staysActiveInBackground is set).
       const audioModeConfig: any = {
         staysActiveInBackground: true,
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
       };
 
-      // Set platform-specific properties
       if (Platform.OS === 'ios') {
-        audioModeConfig.allowsRecordingIOS = false;
-        audioModeConfig.playsInSilentModeIOS = true;
-        // Set interruption mode if available
         if ((Audio as any).INTERRUPTION_MODE_IOS_DO_NOT_MIX !== undefined) {
           audioModeConfig.interruptionModeIOS = (Audio as any).INTERRUPTION_MODE_IOS_DO_NOT_MIX;
         }
         console.log('📱 Configured iOS audio properties');
       } else if (Platform.OS === 'android') {
         audioModeConfig.shouldDuckAndroid = true;
-        audioModeConfig.playThroughEarpieceAndroid = false;
-        // Set interruption mode if available
+        audioModeConfig.playThroughEarpieceAndroid = false; // Use speaker, not earpiece
         if ((Audio as any).INTERRUPTION_MODE_ANDROID_DO_NOT_MIX !== undefined) {
           audioModeConfig.interruptionModeAndroid = (Audio as any).INTERRUPTION_MODE_ANDROID_DO_NOT_MIX;
         }
-        console.log('🤖 Configured Android audio properties');
+        console.log('🤖 Configured Android audio properties (full mode for background)');
       }
 
       console.log('🔧 Audio config:', JSON.stringify(audioModeConfig, null, 2));
@@ -76,32 +77,87 @@ export class ExpoAudioService {
 
   setOnPlaybackStatusUpdate(callback: (status: AVPlaybackStatus) => void) {
     this.onPlaybackStatusUpdateCallback = callback;
-    // If there's already a sound loaded, set the callback on it
     if (this.sound) {
       this.sound.setOnPlaybackStatusUpdate(callback);
     }
+  }
+
+  /** Preload the next track while current is playing so we don't need to load in background */
+  async preloadNextTrack(streamingUrl: string): Promise<void> {
+    if (!streamingUrl?.trim()) return;
+    if (this.preloadedUrl === streamingUrl) return;
+    try {
+      this.clearPreloaded();
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: streamingUrl },
+        { shouldPlay: false, isLooping: false }
+      );
+      this.preloadedSound = sound;
+      this.preloadedUrl = streamingUrl;
+      console.log('✅ [PRELOAD] Next track preloaded');
+    } catch (e: any) {
+      console.warn('⚠️ [PRELOAD] Failed to preload next track:', e?.message);
+      this.clearPreloaded();
+    }
+  }
+
+  clearPreloaded(): void {
+    if (this.preloadedSound) {
+      this.preloadedSound.unloadAsync().catch(() => {});
+      this.preloadedSound = null;
+    }
+    this.preloadedUrl = null;
   }
 
   async playTrack(track: Track, streamingUrl: string) {
     try {
       console.log('🎵 Playing track:', track.title);
       console.log('🔗 Streaming URL:', streamingUrl.substring(0, 100) + '...');
-      
-      // Validate URL
+
       if (!streamingUrl || streamingUrl.trim() === '') {
         throw new Error('Invalid streaming URL: URL is empty');
       }
-      
-      // Ensure audio mode is set for background playback (re-initialize if needed)
+
+      // Use preloaded sound if we have it for this URL (avoids loading in background)
+      if (this.preloadedUrl === streamingUrl && this.preloadedSound) {
+        console.log('✅ [PLAY] Using preloaded sound for next track');
+        if (this.sound) {
+          try {
+            await this.sound.unloadAsync();
+          } catch {
+            // ignore
+          }
+          this.sound = null;
+        }
+        this.sound = this.preloadedSound;
+        this.preloadedSound = null;
+        this.preloadedUrl = null;
+        this.currentTrack = track;
+        if (this.onPlaybackStatusUpdateCallback) {
+          this.sound.setOnPlaybackStatusUpdate(this.onPlaybackStatusUpdateCallback);
+        }
+        await this.sound.playAsync();
+        console.log('✅ Track loaded and playing (from preload):', track.title);
+        const initialStatus = await this.sound.getStatusAsync();
+        if (initialStatus.isLoaded) {
+          console.log('🎵 Initial playback status:', {
+            isPlaying: initialStatus.isPlaying,
+            position: initialStatus.positionMillis,
+            duration: initialStatus.durationMillis,
+          });
+        }
+        return;
+      }
+      this.clearPreloaded();
+
+      // Ensure audio mode is set for background playback (same full config as initialize)
       try {
         const audioModeConfig: any = {
           staysActiveInBackground: true,
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true,
         };
-
-        // Set platform-specific properties
         if (Platform.OS === 'ios') {
-          audioModeConfig.allowsRecordingIOS = false;
-          audioModeConfig.playsInSilentModeIOS = true;
           if ((Audio as any).INTERRUPTION_MODE_IOS_DO_NOT_MIX !== undefined) {
             audioModeConfig.interruptionModeIOS = (Audio as any).INTERRUPTION_MODE_IOS_DO_NOT_MIX;
           }
@@ -112,7 +168,6 @@ export class ExpoAudioService {
             audioModeConfig.interruptionModeAndroid = (Audio as any).INTERRUPTION_MODE_ANDROID_DO_NOT_MIX;
           }
         }
-
         await Audio.setAudioModeAsync(audioModeConfig);
         console.log(`✅ Audio mode configured for ${Platform.OS}`);
       } catch (audioModeError: any) {
@@ -232,7 +287,13 @@ export class ExpoAudioService {
       const errorCode = error?.code || error?.status || 'N/A';
       const errorName = error?.name || 'Unknown';
       
-      console.error('❌ [AUDIO SERVICE] Error playing track:', {
+      // Treat Android background load failures (IOException, java.net) as network errors so they can be retried
+      const isNetworkOrIoError =
+        /network|fetch|econnrefused|ioexception|java\.net|executionexception|connection|timeout/i.test(errorMessage);
+
+      // Use warn for network/IO errors so Expo Go doesn't show red overlay on transient failures (caller will retry)
+      const logFn = isNetworkOrIoError ? console.warn : console.error;
+      logFn(isNetworkOrIoError ? '⚠️ [AUDIO SERVICE] Network/IO error (retryable):' : '❌ [AUDIO SERVICE] Error playing track:', {
         track: track.title,
         artist: track.artist,
         album: track.album,
@@ -240,25 +301,25 @@ export class ExpoAudioService {
         error: errorMessage,
         errorCode,
         errorName,
-        errorType: typeof error,
-        fullError: error,
-        stack: error?.stack
+        isNetworkOrIoError,
       });
-      
-      // Provide more specific error messages
-      if (errorMessage.includes('Network') || errorMessage.includes('fetch') || errorMessage.includes('ECONNREFUSED')) {
-        throw new Error('Network error: Could not connect to audio server. Check your internet connection.');
-      } else if (errorMessage.includes('404') || errorMessage.includes('Not Found')) {
-        throw new Error(`Audio file not found on server. Track: "${track.title}"`);
-      } else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
-        throw new Error(`Access denied to audio file. Track: "${track.title}"`);
-      } else if (errorMessage.includes('format') || errorMessage.includes('codec') || errorMessage.includes('unsupported')) {
-        throw new Error('Audio format not supported');
-      } else if (errorMessage.includes('timeout') || errorMessage.includes('TIMEOUT')) {
-        throw new Error('Request timeout: Server took too long to respond');
-      } else {
-        throw new Error(`Failed to load audio: ${errorMessage}`);
+
+      if (isNetworkOrIoError) {
+        throw new Error(`Network error: Could not load audio (${errorMessage.slice(0, 80)}...)`);
       }
+      if (errorMessage.includes('404') || errorMessage.includes('Not Found')) {
+        throw new Error(`Audio file not found on server. Track: "${track.title}"`);
+      }
+      if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
+        throw new Error(`Access denied to audio file. Track: "${track.title}"`);
+      }
+      if (errorMessage.includes('format') || errorMessage.includes('codec') || errorMessage.includes('unsupported')) {
+        throw new Error('Audio format not supported');
+      }
+      if (errorMessage.includes('timeout') || errorMessage.includes('TIMEOUT')) {
+        throw new Error('Request timeout: Server took too long to respond');
+      }
+      throw new Error(`Failed to load audio: ${errorMessage}`);
     }
   }
 
@@ -327,6 +388,28 @@ export class ExpoAudioService {
       this.sound = null;
       this.currentTrack = null;
     }
+  }
+
+  /**
+   * Stop and unload current playback and clear preloaded track.
+   * Call this before starting a new track so only one song ever plays (e.g. when user taps a song in the list).
+   */
+  async stopAndUnloadCurrent(): Promise<void> {
+    if (this.sound) {
+      try {
+        await this.sound.stopAsync();
+      } catch {
+        // ignore
+      }
+      try {
+        await this.sound.unloadAsync();
+      } catch {
+        // ignore
+      }
+      this.sound = null;
+      this.currentTrack = null;
+    }
+    this.clearPreloaded();
   }
 }
 

@@ -121,19 +121,34 @@ This will:
 
 ## Building for Production
 
+**Current app version:** `1.0.11` (Android `versionCode` 12). Set in `app.json`.
+
+### Android (APK)
+
+```bash
+npm run build:android
+```
+
+Or for a preview/internal APK:
+
+```bash
+npm run build:android:preview
+```
+
 ### iOS
 
 ```bash
-eas build --platform ios
+npm run build:ios
 ```
 
-### Android
+Or run EAS directly:
 
 ```bash
-eas build --platform android
+eas build --platform android --profile production
+eas build --platform ios --profile production
 ```
 
-> Note: You'll need to configure EAS (Expo Application Services) first. See the [Expo documentation](https://docs.expo.dev/build/introduction/) for details.
+> **Note:** You need [EAS CLI](https://docs.expo.dev/build/setup/) and an Expo account. Log in with `eas login`. See the [Expo Build docs](https://docs.expo.dev/build/introduction/).
 
 ## Configuration
 
@@ -174,6 +189,63 @@ The app connects to a backend API for music library data. The default backend UR
 
 - Search across albums, artists, and tracks
 - Real-time filtering as you type
+
+## Expo Go vs production (why music stops / app “restarts” in dev)
+
+**In Expo Go or dev builds:**
+
+1. **Music stops after a track (e.g. after song 02)**  
+   When the app is in the background or the screen is off, the OS can **throttle or suspend JavaScript**. So “track finished” callbacks and the 15s force-next logic may not run. When you return, the next track might only start from the foreground check, or you may need to tap play again.
+
+2. **App “restarts” when you return**  
+   With the app in the background, the OS can **kill the process** to free memory (especially on Android). When you bring the app back, the system (or Expo Go) **restarts the app** and reloads the bundle, so it looks like a fresh launch. You’ll see `🚀 [INIT] App cold start / restart - initializing audio service...` in the terminal when that happens.
+
+**In a production build (EAS Build or dev client .apk/.aab):**
+
+- Your app runs in its own process with proper **background audio** and (on Android) **foreground service** usage.
+- The system is less likely to kill the app while audio is playing or right after.
+- Track-to-track transitions and “return to app” behavior are usually more reliable.
+
+**Recommendation:** To verify behavior that depends on background (e.g. music not stopping, app not restarting when returning), test with a **production or development build** (e.g. `eas build` or a custom dev client), not only in Expo Go.
+
+## Music stops when the phone is not charging (Android)
+
+**What you see:** Playback works fine while the device is **charging** (screen off, next song starts). When you **unplug** the charger, after one or two more songs the music stops and the next track does not start (no logs, nothing until you return to the app).
+
+**Why this happens:** On Android, when the screen is off and the device is **not charging**, the system can enter **Doze mode** (and App Standby) to save battery. In Doze mode the system:
+
+- Restricts background CPU and network
+- Defers or suspends JavaScript and timers
+- Can kill or suspend your app’s process so “track finished” and other callbacks never run
+
+When the device is **charging**, Android does **not** enter Doze (or exits it), so your app keeps running and playback continues. That’s why you see correct behavior while plugged in and stops after unplugging.
+
+**What we do in the app:** When playback starts we run an Android **foreground service** with type `MEDIA_PLAYBACK` and a “Now playing” notification (`expo-foreground-service`). That tells the OS the app is doing user-visible media playback, so it does not kill or suspend the process when the screen is off and the device is unplugged. The service is stopped when you pause or when the album ends. If `expo-foreground-service` is not installed, the app still runs but may stop after a few tracks when unplugged (same as before).
+
+**Install the foreground service package (required for the fix):**
+
+The package is not on npm; install from GitHub:
+
+```bash
+cd music-mobile
+npm install github:HashimTheArab/expo-foreground-service
+```
+
+Then rebuild the native app so the plugin is applied (Expo Go won’t include the native module):
+
+```bash
+npx expo run:android
+```
+
+Or create a new build with EAS Build. The plugin in `app.json` uses `MEDIA_PLAYBACK`; the package provides the native foreground service. On Android 13+, the app requests notification permission so the “Now playing” notification can be shown.
+
+**If you still see music stop when unplugged:**
+
+1. **Disable battery optimization for this app**  
+   - **Settings → Apps → [Music app name] → Battery** → **Unrestricted** (or “Don’t optimize” / “Allow background activity”).
+
+2. **On some brands (Samsung, Huawei, etc.):**  
+   **Settings → Battery → Background usage limits** — ensure the app is **not** in “Sleeping” or “Restricted”.
 
 ## Troubleshooting
 
