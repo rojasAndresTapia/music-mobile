@@ -31,6 +31,10 @@ interface AudioContextType {
   isPlaying: boolean;
   isLoading: boolean;
   isShuffled: boolean;
+  /** Last playback error message, e.g. "Network error" – useful when debugging on an installed build without Metro. */
+  lastPlayError: string | null;
+  /** Shown when loading has taken longer than expected (e.g. 15s) – helps when the request never fails but never completes. */
+  loadingSlowMessage: string | null;
   playTrack: (track: Track, album?: AlbumListProps, trackIndex?: number) => Promise<void>;
   playShuffled: (album: AlbumListProps) => Promise<void>;
   pauseTrack: () => Promise<void>;
@@ -71,6 +75,12 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isShuffled, setIsShuffled] = useState(false);
+  const [lastPlayError, setLastPlayError] = useState<string | null>(null);
+  const [loadingSlowMessage, setLoadingSlowMessage] = useState<string | null>(null);
+  const loadingSlowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Seconds of loading before we show "taking too long" message */
+  const LOADING_SLOW_SECONDS = 15;
 
   // Use refs to access latest values in callbacks (critical for background execution)
   const currentAlbumRef = useRef<AlbumListProps | null>(null);
@@ -602,6 +612,7 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
     // Claim this play request so any in-flight playTrack (e.g. from handleTrackFinished) will abort when we overwrite this.
     playRequestIdRef.current += 1;
     const myRequestId = playRequestIdRef.current;
+    setLastPlayError(null);
 
     try {
       // Ensure only one song ever plays: cancel pending "retry when active" and stop any current playback
@@ -619,7 +630,16 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
         return;
       }
 
+      // Clear any previous "loading slow" timer and message before starting a new load
+      if (loadingSlowTimerRef.current) {
+        clearTimeout(loadingSlowTimerRef.current);
+        loadingSlowTimerRef.current = null;
+      }
+      setLoadingSlowMessage(null);
       setIsLoading(true);
+      loadingSlowTimerRef.current = setTimeout(() => {
+        setLoadingSlowMessage('Taking longer than usual – check your connection?');
+      }, LOADING_SLOW_SECONDS * 1000);
       setCurrentTrack(track);
       trackFinishedTriggeredRef.current = null;
       preloadTriggeredForRef.current = null; // Allow preload for this track when near end
@@ -698,6 +718,12 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
           streamingUrl = await getTrackStreamingUrl(track);
           if (playRequestIdRef.current !== myRequestId) {
             console.log('🔇 [PLAY] Aborted after getting URL: another play started');
+            if (loadingSlowTimerRef.current) {
+              clearTimeout(loadingSlowTimerRef.current);
+              loadingSlowTimerRef.current = null;
+            }
+            setLoadingSlowMessage(null);
+            setIsLoading(false);
             return;
           }
           console.log('✅ [PLAY] Got streaming URL:', streamingUrl.substring(0, 150));
@@ -732,6 +758,12 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
 
       if (playRequestIdRef.current !== myRequestId) {
         console.log('🔇 [PLAY] Aborted before starting audio: another play started');
+        if (loadingSlowTimerRef.current) {
+          clearTimeout(loadingSlowTimerRef.current);
+          loadingSlowTimerRef.current = null;
+        }
+        setLoadingSlowMessage(null);
+        setIsLoading(false);
         return;
       }
       // Start Android foreground service (media playback) so the app is not killed when screen is off and not charging (Doze).
@@ -739,13 +771,21 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
       await expoAudioService.playTrack(track, streamingUrl);
       if (playRequestIdRef.current !== myRequestId) {
         console.log('🔇 [PLAY] Aborted after starting audio: another play started (ignoring this one)');
+        if (loadingSlowTimerRef.current) {
+          clearTimeout(loadingSlowTimerRef.current);
+          loadingSlowTimerRef.current = null;
+        }
+        setLoadingSlowMessage(null);
+        setIsLoading(false);
         return;
       }
       setIsPlaying(true);
+      setLastPlayError(null);
       transitionStartTimeRef.current = null; // Transition completed - next track is playing
       console.log(`✅ [PLAY] Track started: ${track.title}`);
     } catch (error: any) {
       const errorMessage = error?.message || 'Unknown error occurred';
+      setLastPlayError(errorMessage);
       const isNetworkError = isNetworkOrLoadError(errorMessage);
       const willRetry = isNetworkError && retryCount < maxRetries;
 
@@ -774,6 +814,11 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
 
       throw new Error(errorMessage);
     } finally {
+      if (loadingSlowTimerRef.current) {
+        clearTimeout(loadingSlowTimerRef.current);
+        loadingSlowTimerRef.current = null;
+      }
+      setLoadingSlowMessage(null);
       setIsLoading(false);
     }
   }, []);
@@ -861,6 +906,8 @@ export const AudioProvider: React.FC<Props> = ({ children }) => {
     isPlaying,
     isLoading,
     isShuffled,
+    lastPlayError,
+    loadingSlowMessage,
     playTrack,
     playShuffled,
     pauseTrack,

@@ -21,6 +21,8 @@ export const AudioPlayerBar: React.FC<Props> = ({ visible }) => {
     currentTrack, 
     isPlaying, 
     isShuffled,
+    lastPlayError,
+    loadingSlowMessage,
     pauseTrack, 
     resumeTrack,
     skipToNext,
@@ -292,6 +294,24 @@ export const AudioPlayerBar: React.FC<Props> = ({ visible }) => {
         </View>
       </View>
 
+      {/* Playback error – shown when play fails (e.g. on installed build without Metro) */}
+      {lastPlayError ? (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText} numberOfLines={2}>
+            Play failed: {lastPlayError}
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Loading too long – when loading takes more than ~15s (request never fails but never completes) */}
+      {loadingSlowMessage ? (
+        <View style={styles.loadingSlowBanner}>
+          <Text style={styles.loadingSlowText} numberOfLines={2}>
+            {loadingSlowMessage}
+          </Text>
+        </View>
+      ) : null}
+
       {/* Player Content */}
       <View style={styles.playerContent}>
         {/* Track Info - Above Controls */}
@@ -404,6 +424,36 @@ const styles = StyleSheet.create({
   timeText: {
     fontSize: 11,
     color: '#666',
+    fontWeight: '500',
+  },
+  errorBanner: {
+    backgroundColor: '#ffebee',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    marginHorizontal: 16,
+    marginTop: 4,
+    borderRadius: 6,
+    borderLeftWidth: 4,
+    borderLeftColor: '#c62828',
+  },
+  errorText: {
+    fontSize: 12,
+    color: '#c62828',
+    fontWeight: '500',
+  },
+  loadingSlowBanner: {
+    backgroundColor: '#fff8e1',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    marginHorizontal: 16,
+    marginTop: 4,
+    borderRadius: 6,
+    borderLeftWidth: 4,
+    borderLeftColor: '#f9a825',
+  },
+  loadingSlowText: {
+    fontSize: 12,
+    color: '#e65100',
     fontWeight: '500',
   },
   playerContent: {

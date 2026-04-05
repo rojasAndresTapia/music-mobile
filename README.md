@@ -239,6 +239,8 @@ npx expo run:android
 
 Or create a new build with EAS Build. The plugin in `app.json` uses `MEDIA_PLAYBACK`; the package provides the native foreground service. On Android 13+, the app requests notification permission so the “Now playing” notification can be shown.
 
+**Why playback could work in Expo Go / dev but hang forever in a release build:** The library’s JavaScript `startService(config, callback)` only finishes after `callback()` completes. We must **not** use that API with an infinite “keep alive” callback — it would block `playTrack` after the native service starts. The app uses the **native** `startService(config)` only (via `requireNativeModule('ExpoForegroundService')`), which resolves immediately. Expo Go often doesn’t include this native module, so the old bug looked like “dev works, production doesn’t.”
+
 **If you still see music stop when unplugged:**
 
 1. **Disable battery optimization for this app**  
@@ -247,13 +249,85 @@ Or create a new build with EAS Build. The plugin in `app.json` uses `MEDIA_PLAYB
 2. **On some brands (Samsung, Huawei, etc.):**  
    **Settings → Battery → Background usage limits** — ensure the app is **not** in “Sleeping” or “Restricted”.
 
+## Viewing logs on an installed (production) build
+
+When the app is installed from a build (not running with `expo start`), you don’t have the Metro terminal. You can still see logs:
+
+### Android
+
+1. **Enable Developer options** on the phone: **Settings → About phone** → tap **Build number** 7 times.
+2. **Enable USB debugging**: **Settings → Developer options** → **USB debugging**.
+3. Connect the phone to your computer with a USB cable.
+4. **Install `adb` (Android Debug Bridge)** if you see `command not found: adb`:
+   - **Option A (recommended):** Install [Android Studio](https://developer.android.com/studio). Then `adb` is at `~/Library/Android/sdk/platform-tools/adb`. Add it to your PATH, e.g. in `~/.zshrc`:  
+     `export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"`  
+     Then run `source ~/.zshrc` or open a new terminal.
+   - **Option B:** Install only [Android Platform Tools](https://developer.android.com/studio/releases/platform-tools) and add the folder that contains `adb` to your PATH.
+5. In a terminal, run (use **quotes** so zsh doesn’t treat `*` as a glob):
+
+   ```bash
+   adb logcat '*:S' 'ReactNative:V' 'ReactNativeJS:V'
+   ```
+
+   Or filter by your app’s package name:
+
+   ```bash
+   adb logcat --pid=$(adb shell pidof -s com.rojastapiaandres.musicmobile)
+   ```
+
+   Then reproduce the issue (e.g. tap a song). You’ll see `console.log` / `console.error` output. Look for lines with `[PLAY]`, `[AUDIO`, `Error`, or your backend URL.
+
+### iOS
+
+Connect the device, open **Xcode → Window → Devices and Simulators**, select the device, then click **Open Console** to stream the device log. Filter by your app name to see logs.
+
+### In-app playback error
+
+When play fails, the app shows a short message in the player bar: **“Play failed: …”** with the error text (e.g. “Network error”, “Could not connect to music server”). So on an installed build you can see why playback failed without using a computer. The message clears when you tap another track or when play succeeds.
+
+## Debugging when a song never starts (without adb)
+
+If you don’t have Android Studio or `adb`, you can still narrow down the problem:
+
+### 1. On the phone – in-app error
+
+Use a build that includes the **“Play failed: …”** message (see **In-app playback error** above). When you tap a song:
+
+- If a **red banner** appears in the player bar with text like “Play failed: …”, read that message. It usually says whether it’s a network error, missing URL, or something else.
+- If **nothing** happens (no sound, no error banner), the app may be failing before it can show the error (e.g. crash or hang when loading the stream).
+
+### 2. Railway – backend logs
+
+Your app streams audio from the backend. When you **tap a song**, the app should send a request to your Railway backend for that track.
+
+1. Open **[Railway](https://railway.app)** → your project → **Deployments** (or **Logs** / **Metrics**).
+2. On your phone, open the app and **tap a song**.
+3. In Railway, check whether a **new request** appears when you tap (e.g. to `/audio-proxy?key=...` or similar).
+
+- **If you see a request** when you tap: the app is reaching the backend. The problem may be the response (e.g. wrong format, 4xx/5xx) or playback on the device (e.g. codec, Expo AV).
+- **If you see no request** when you tap: the app is likely not calling the backend (e.g. wrong API URL in the app, no internet on the phone, or the app failing before the request).
+
+That helps you tell “backend not hit” from “backend hit but playback fails”.
+
+### 3. (Optional) Install only `adb`, without Android Studio
+
+To use `adb logcat` later without installing Android Studio:
+
+1. Download **Command line tools only** (platform-tools) from:  
+   [https://developer.android.com/studio/releases/platform-tools](https://developer.android.com/studio/releases/platform-tools)
+2. Unzip and add the folder that contains `adb` to your `PATH` (e.g. in `~/.zshrc`:  
+   `export PATH="/path/to/platform-tools:$PATH"`).
+
+Then you can use the `adb logcat` commands from the **Viewing logs** section above.
+
 ## Troubleshooting
 
 ### Audio Not Playing
 
 - Ensure the backend is running and accessible
-- Check network connectivity
+- Check network connectivity (phone and backend must reach each other; production backend URL in `api.ts` must be correct)
 - Verify track URLs are valid
+- Use **Viewing logs on an installed (production) build** above to see the exact error in logcat (Android) or Xcode console (iOS)
 - In Expo Go, background audio may be limited - use a production build for full functionality
 
 ### Backend Connection Issues
